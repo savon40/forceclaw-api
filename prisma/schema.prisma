@@ -1,0 +1,165 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Account {
+  id        String   @id @default(uuid())
+  name      String
+  plan      String   @default("starter")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users            User[]
+  orgs             Org[]
+  jobs             Job[]
+  auditLogs        AuditLog[]
+  slackConnections SlackConnection[]
+  teamInvites      TeamInvite[]
+
+  @@map("accounts")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  accountId String   @map("account_id")
+  email     String   @unique
+  name      String?
+  role      String   @default("member")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  account   Account    @relation(fields: [accountId], references: [id])
+  jobs      Job[]
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+model Org {
+  id               String   @id @default(uuid())
+  accountId        String   @map("account_id")
+  name             String
+  salesforceOrgId  String   @map("salesforce_org_id")
+  type             String   @default("sandbox")
+  tokenStatus      String   @default("valid") @map("token_status")
+  accessToken      String?  @map("access_token")
+  refreshToken     String?  @map("refresh_token")
+  instanceUrl      String?  @map("instance_url")
+  defaultSandbox   String?  @map("default_sandbox")
+  gitRepoUrl       String?  @map("git_repo_url")
+  lastActivityAt   DateTime? @map("last_activity_at")
+  connectedAt      DateTime @default(now()) @map("connected_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  account Account @relation(fields: [accountId], references: [id])
+  jobs    Job[]
+
+  @@map("orgs")
+}
+
+model Job {
+  id              String    @id @default(uuid())
+  accountId       String    @map("account_id")
+  orgId           String    @map("org_id")
+  userId          String    @map("user_id")
+  status          String    @default("queued")
+  type            String
+  title           String
+  description     String?
+  branchName      String?   @map("branch_name")
+  prUrl           String?   @map("pr_url")
+  changeSetName   String?   @map("change_set_name")
+  pendingQuestion String?   @map("pending_question")
+  durationMs      Int?      @map("duration_ms")
+  completedAt     DateTime? @map("completed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  account   Account       @relation(fields: [accountId], references: [id])
+  org       Org           @relation(fields: [orgId], references: [id])
+  user      User          @relation(fields: [userId], references: [id])
+  logs      JobLog[]
+  artifacts JobArtifact[]
+
+  @@map("jobs")
+}
+
+model JobLog {
+  id        String   @id @default(uuid())
+  jobId     String   @map("job_id")
+  level     String   @default("info")
+  message   String
+  timestamp DateTime @default(now())
+
+  job Job @relation(fields: [jobId], references: [id])
+
+  @@map("job_logs")
+}
+
+model JobArtifact {
+  id         String @id @default(uuid())
+  jobId      String @map("job_id")
+  type       String
+  filename   String
+  commitHash String @map("commit_hash")
+  diffUrl    String @map("diff_url")
+
+  job Job @relation(fields: [jobId], references: [id])
+
+  @@map("job_artifacts")
+}
+
+model AuditLog {
+  id              String   @id @default(uuid())
+  accountId       String   @map("account_id")
+  userId          String?  @map("user_id")
+  orgId           String?  @map("org_id")
+  actionType      String   @map("action_type")
+  description     String
+  metadataChanged Json?    @map("metadata_changed")
+  gitCommitHash   String?  @map("git_commit_hash")
+  status          String   @default("success")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  account Account @relation(fields: [accountId], references: [id])
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model SlackConnection {
+  id            String   @id @default(uuid())
+  accountId     String   @map("account_id")
+  workspaceId   String   @map("workspace_id")
+  workspaceName String   @map("workspace_name")
+  accessToken   String   @map("access_token")
+  botUserId     String?  @map("bot_user_id")
+  channels      Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@map("slack_connections")
+}
+
+model TeamInvite {
+  id        String   @id @default(uuid())
+  accountId String   @map("account_id")
+  email     String
+  role      String   @default("member")
+  status    String   @default("pending")
+  invitedBy String   @map("invited_by")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@map("team_invites")
+}
