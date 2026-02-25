@@ -131,6 +131,111 @@ router.post(
   }
 );
 
+// POST /api/orgs/connect/salesforce/credentials — connect via username/password
+router.post(
+  "/connect/salesforce/credentials",
+  async (req: Request, res: Response) => {
+    try {
+    const account = await resolveAccount(req, res);
+    if (!account) return;
+
+    const { username, password, securityToken, loginUrl, consumerKey, consumerSecret } =
+      req.body as {
+        username?: string;
+        password?: string;
+        securityToken?: string;
+        loginUrl?: string;
+        consumerKey?: string;
+        consumerSecret?: string;
+      };
+
+    if (!username || !password || !securityToken || !consumerKey || !consumerSecret) {
+      res.status(400).json({
+        error:
+          "Missing required fields: username, password, security token, consumer key, and consumer secret",
+      });
+      return;
+    }
+
+    const sfLoginUrl = loginUrl || "https://login.salesforce.com";
+
+    console.log("Attempting SF credential login for:", username, "at", sfLoginUrl);
+
+    let result;
+    try {
+      result = await salesforceService.loginWithCredentials({
+        username,
+        password,
+        securityToken,
+        loginUrl: sfLoginUrl,
+        consumerKey,
+        consumerSecret,
+      });
+    } catch (err) {
+      console.error("Salesforce credential login failed:", err);
+      const message =
+        err instanceof Error ? err.message : "Salesforce login failed";
+      res.status(400).json({ error: message });
+      return;
+    }
+
+    // Check if this Salesforce org is already connected
+    const existingOrg = await prisma.org.findFirst({
+      where: {
+        accountId: account.accountId,
+        salesforceOrgId: result.salesforceOrgId,
+      },
+    });
+
+    if (existingOrg) {
+      const updatedOrg = await prisma.org.update({
+        where: { id: existingOrg.id },
+        data: {
+          accessToken: result.accessToken,
+          instanceUrl: result.instanceUrl,
+          tokenStatus: "valid",
+          name: result.orgName,
+          type: result.orgType,
+          sfUsername: username,
+          sfPassword: password,
+          sfSecurityToken: securityToken,
+          sfLoginUrl: sfLoginUrl,
+          sfConsumerKey: consumerKey,
+          sfConsumerSecret: consumerSecret,
+        },
+      });
+      res.json(toOrgResponse(updatedOrg));
+      return;
+    }
+
+    const org = await prisma.org.create({
+      data: {
+        accountId: account.accountId,
+        name: result.orgName,
+        salesforceOrgId: result.salesforceOrgId,
+        accessToken: result.accessToken,
+        instanceUrl: result.instanceUrl,
+        type: result.orgType,
+        tokenStatus: "valid",
+        sfUsername: username,
+        sfPassword: password,
+        sfSecurityToken: securityToken,
+        sfLoginUrl: sfLoginUrl,
+        sfConsumerKey: consumerKey,
+        sfConsumerSecret: consumerSecret,
+      },
+    });
+
+    res.status(201).json(toOrgResponse(org));
+    } catch (err) {
+      console.error("Unhandled error in SF credentials endpoint:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    }
+  }
+);
+
 // DELETE /api/orgs/:orgId — disconnect org
 router.delete("/:orgId", async (req: Request, res: Response) => {
   const account = await resolveAccount(req, res);

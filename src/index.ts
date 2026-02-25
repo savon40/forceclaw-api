@@ -11,6 +11,7 @@ import auditRouter from "./routes/audit";
 import teamRouter from "./routes/team";
 import billingRouter from "./routes/billing";
 import slackRouter from "./routes/slack";
+import userRouter from "./routes/user";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -32,6 +33,7 @@ app.use("/api/audit", requireAuth, auditRouter);
 app.use("/api/team", requireAuth, teamRouter);
 app.use("/api/billing", requireAuth, billingRouter);
 app.use("/api/slack", requireAuth, slackRouter);
+app.use("/api/user", requireAuth, userRouter);
 
 // Global error handler
 app.use(errorHandler);
