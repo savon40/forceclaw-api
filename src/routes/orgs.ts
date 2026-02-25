@@ -139,40 +139,34 @@ router.post(
     const account = await resolveAccount(req, res);
     if (!account) return;
 
-    const { username, password, securityToken, loginUrl, consumerKey, consumerSecret } =
+    const { loginUrl, consumerKey, consumerSecret } =
       req.body as {
-        username?: string;
-        password?: string;
-        securityToken?: string;
         loginUrl?: string;
         consumerKey?: string;
         consumerSecret?: string;
       };
 
-    if (!username || !password || !securityToken || !consumerKey || !consumerSecret) {
+    if (!consumerKey || !consumerSecret) {
       res.status(400).json({
         error:
-          "Missing required fields: username, password, security token, consumer key, and consumer secret",
+          "Missing required fields: consumer key and consumer secret",
       });
       return;
     }
 
     const sfLoginUrl = loginUrl || "https://login.salesforce.com";
 
-    console.log("Attempting SF credential login for:", username, "at", sfLoginUrl);
+    console.log("Attempting SF client credentials login at", sfLoginUrl);
 
     let result;
     try {
-      result = await salesforceService.loginWithCredentials({
-        username,
-        password,
-        securityToken,
-        loginUrl: sfLoginUrl,
+      result = await salesforceService.loginWithClientCredentials({
         consumerKey,
         consumerSecret,
+        loginUrl: sfLoginUrl,
       });
     } catch (err) {
-      console.error("Salesforce credential login failed:", err);
+      console.error("Salesforce client credentials login failed:", err);
       const message =
         err instanceof Error ? err.message : "Salesforce login failed";
       res.status(400).json({ error: message });
@@ -188,6 +182,7 @@ router.post(
     });
 
     if (existingOrg) {
+      console.log("Updating existing org:", existingOrg.id);
       const updatedOrg = await prisma.org.update({
         where: { id: existingOrg.id },
         data: {
@@ -196,18 +191,18 @@ router.post(
           tokenStatus: "valid",
           name: result.orgName,
           type: result.orgType,
-          sfUsername: username,
-          sfPassword: password,
-          sfSecurityToken: securityToken,
           sfLoginUrl: sfLoginUrl,
           sfConsumerKey: consumerKey,
           sfConsumerSecret: consumerSecret,
         },
       });
-      res.json(toOrgResponse(updatedOrg));
+      const response = toOrgResponse(updatedOrg);
+      console.log("Sending update response:", response.id, response.name);
+      res.json(response);
       return;
     }
 
+    console.log("Creating new org for account:", account.accountId);
     const org = await prisma.org.create({
       data: {
         accountId: account.accountId,
@@ -217,16 +212,15 @@ router.post(
         instanceUrl: result.instanceUrl,
         type: result.orgType,
         tokenStatus: "valid",
-        sfUsername: username,
-        sfPassword: password,
-        sfSecurityToken: securityToken,
         sfLoginUrl: sfLoginUrl,
         sfConsumerKey: consumerKey,
         sfConsumerSecret: consumerSecret,
       },
     });
 
-    res.status(201).json(toOrgResponse(org));
+    const response = toOrgResponse(org);
+    console.log("Sending create response:", response.id, response.name);
+    res.status(201).json(response);
     } catch (err) {
       console.error("Unhandled error in SF credentials endpoint:", err);
       if (!res.headersSent) {

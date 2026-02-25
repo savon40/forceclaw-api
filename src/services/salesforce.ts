@@ -25,65 +25,100 @@ interface CredentialLoginResult {
 }
 
 export class SalesforceService {
-  async loginWithCredentials(params: {
-    username: string;
-    password: string;
-    securityToken: string;
-    loginUrl: string;
+  /**
+   * Authenticate using OAuth 2.0 Client Credentials Flow.
+   * Only requires consumerKey, consumerSecret, and loginUrl.
+   * The "Run As" user is configured on the External Client App in Salesforce.
+   */
+  async loginWithClientCredentials(params: {
     consumerKey: string;
     consumerSecret: string;
+    loginUrl: string;
   }): Promise<CredentialLoginResult> {
-    // Step 1: SOAP login to verify user credentials and get org info
-    const conn = new jsforce.Connection({ loginUrl: params.loginUrl });
-    await conn.login(
-      params.username,
-      params.password + params.securityToken
+    const tokenUrl = `${params.loginUrl}/services/oauth2/token`;
+
+    // Step 1: Get access token via client_credentials grant
+    console.log("Requesting token from:", tokenUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    let oauthResponse: Response;
+    try {
+      oauthResponse = await fetch(tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "client_credentials",
+          client_id: params.consumerKey,
+          client_secret: params.consumerSecret,
+        }),
+        signal: controller.signal,
+      });
+    } catch (fetchErr) {
+      clearTimeout(timeout);
+      if (fetchErr instanceof Error && fetchErr.name === "AbortError") {
+        throw new Error(
+          "Salesforce token request timed out after 30 seconds. Check that your Salesforce Domain is correct."
+        );
+      }
+      throw new Error(
+        `Failed to connect to Salesforce: ${fetchErr instanceof Error ? fetchErr.message : "Network error"}`
+      );
+    }
+    clearTimeout(timeout);
+
+    console.log("Token response status:", oauthResponse.status);
+
+    if (!oauthResponse.ok) {
+      const errorText = await oauthResponse.text().catch(() => "");
+      console.error("Token error response:", errorText);
+      let errorMessage = "Unknown error";
+      try {
+        const errorBody = JSON.parse(errorText) as {
+          error?: string;
+          error_description?: string;
+        };
+        errorMessage =
+          errorBody.error_description || errorBody.error || errorMessage;
+      } catch {
+        // Response was not JSON
+        if (errorText) errorMessage = errorText.slice(0, 200);
+      }
+      throw new Error(
+        `Client Credentials authentication failed: ${errorMessage}. ` +
+          "Check that your Consumer Key and Secret are correct, and that the External Client App has Client Credentials Flow enabled with a Run As user configured."
+      );
+    }
+
+    const oauthData = (await oauthResponse.json()) as {
+      access_token: string;
+      instance_url: string;
+    };
+    console.log(
+      "Token obtained, instance_url:",
+      oauthData.instance_url
     );
 
-    // Query Organization sObject for org name, type, and sandbox flag
+    // Step 2: Query org info using the access token
+    const conn = new jsforce.Connection({
+      instanceUrl: oauthData.instance_url,
+      accessToken: oauthData.access_token,
+    });
+
+    console.log("Querying Organization info...");
     const orgInfo = await conn.query<{
       Id: string;
       Name: string;
       IsSandbox: boolean;
       OrganizationType: string;
-    }>("SELECT Id, Name, IsSandbox, OrganizationType FROM Organization LIMIT 1");
+    }>(
+      "SELECT Id, Name, IsSandbox, OrganizationType FROM Organization LIMIT 1"
+    );
+    console.log("Org info retrieved:", orgInfo.records[0]?.Name);
 
     const record = orgInfo.records[0];
 
-    // Step 2: Validate the Connected App via OAuth2 password grant.
-    // This confirms the consumer key/secret are correct and the app is active.
-    const tokenUrl = `${params.loginUrl}/services/oauth2/token`;
-    const oauthResponse = await fetch(tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "password",
-        client_id: params.consumerKey,
-        client_secret: params.consumerSecret,
-        username: params.username,
-        password: params.password + params.securityToken,
-      }),
-    });
-
-    if (!oauthResponse.ok) {
-      const errorBody = (await oauthResponse.json().catch(() => ({}))) as {
-        error?: string;
-        error_description?: string;
-      };
-      throw new Error(
-        `Connected App validation failed: ${errorBody.error_description || errorBody.error || "Unknown error"}. ` +
-        "Check that your Consumer Key and Secret are correct, and that the app allows OAuth Username-Password Flow."
-      );
-    }
-
-    // Use the OAuth2 token (from the Connected App) as the stored access token
-    const oauthData = (await oauthResponse.json()) as {
-      access_token: string;
-      instance_url: string;
-      refresh_token?: string;
-    };
-
-    // Determine org type: sandbox, developer edition, or production
+    // Determine org type
     let orgType: "sandbox" | "developer" | "production";
     if (record.IsSandbox) {
       orgType = "sandbox";
