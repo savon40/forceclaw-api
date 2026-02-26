@@ -25,6 +25,12 @@ app.use("/api/slack", slackWebhooksRouter);
 
 app.use(express.json());
 
+// Request logging
+app.use((req, _res, next) => {
+  console.log(`${req.method} ${req.path}`);
+  next();
+});
+
 // Health check (no auth)
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });

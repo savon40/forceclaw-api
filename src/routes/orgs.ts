@@ -230,6 +230,57 @@ router.post(
   }
 );
 
+// POST /api/orgs/:orgId/test — test Salesforce connection
+router.post("/:orgId/test", async (req: Request, res: Response) => {
+  const account = await resolveAccount(req, res);
+  if (!account) return;
+
+  const orgId = req.params.orgId as string;
+  const org = await prisma.org.findFirst({
+    where: { id: orgId, accountId: account.accountId },
+  });
+
+  if (!org) {
+    res.status(404).json({ error: "Org not found" });
+    return;
+  }
+
+  if (!org.sfConsumerKey || !org.sfConsumerSecret) {
+    res.status(400).json({ error: "Org is missing credentials" });
+    return;
+  }
+
+  try {
+    const result = await salesforceService.loginWithClientCredentials({
+      consumerKey: org.sfConsumerKey,
+      consumerSecret: org.sfConsumerSecret,
+      loginUrl: org.sfLoginUrl || "https://login.salesforce.com",
+    });
+
+    // Update token and instance URL on success
+    await prisma.org.update({
+      where: { id: org.id },
+      data: {
+        accessToken: result.accessToken,
+        instanceUrl: result.instanceUrl,
+        tokenStatus: "valid",
+      },
+    });
+
+    res.json({ success: true, orgName: result.orgName });
+  } catch (err) {
+    // Mark as expired on failure
+    await prisma.org.update({
+      where: { id: org.id },
+      data: { tokenStatus: "expired" },
+    });
+
+    const message =
+      err instanceof Error ? err.message : "Connection test failed";
+    res.status(400).json({ error: message });
+  }
+});
+
 // DELETE /api/orgs/:orgId — disconnect org
 router.delete("/:orgId", async (req: Request, res: Response) => {
   const account = await resolveAccount(req, res);
