@@ -64,7 +64,6 @@ router.get("/setup-status", async (req: Request, res: Response) => {
     const sfOrg = await prisma.org.findFirst({
       where: {
         accountId: account.accountId,
-        sfUsername: { not: null },
         tokenStatus: "valid",
       },
       select: {
