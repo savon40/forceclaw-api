@@ -1,4 +1,52 @@
+import crypto from "crypto";
+
 export class SlackService {
+  verifySignature(signature: string, timestamp: string, rawBody: string): boolean {
+    const signingSecret = process.env.SLACK_SIGNING_SECRET;
+    if (!signingSecret) {
+      throw new Error("SLACK_SIGNING_SECRET not configured");
+    }
+
+    // Reject requests older than 5 minutes to prevent replay attacks
+    const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 300;
+    if (parseInt(timestamp, 10) < fiveMinutesAgo) {
+      return false;
+    }
+
+    const sigBasestring = `v0:${timestamp}:${rawBody}`;
+    const mySignature =
+      "v0=" +
+      crypto
+        .createHmac("sha256", signingSecret)
+        .update(sigBasestring)
+        .digest("hex");
+
+    return crypto.timingSafeEqual(
+      Buffer.from(mySignature),
+      Buffer.from(signature)
+    );
+  }
+
+  async postMessage(
+    accessToken: string,
+    channel: string,
+    text: string
+  ): Promise<void> {
+    const response = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ channel, text }),
+    });
+
+    const data = (await response.json()) as { ok: boolean; error?: string };
+    if (!data.ok) {
+      throw new Error(`Slack postMessage failed: ${data.error}`);
+    }
+  }
+
   buildAuthorizationUrl(accountId: string): string {
     const clientId = process.env.SLACK_CLIENT_ID;
     const redirectUri = process.env.SLACK_REDIRECT_URI;

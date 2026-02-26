@@ -1,0 +1,14 @@
+heroku config:set \
+    NODE_ENV=production \
+    FRONTEND_URL=https://forceclaw.ai \
+    "DATABASE_URL=postgresql://postgres.ealirhudqcsdxmrsltws:9zUbY1OnyG3H3B4H@aws-1-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true" \
+    DIRECT_URL=postgresql://postgres.ealirhudqcsdxmrsltws:9zUbY1OnyG3H3B4H@aws-1-us-east-1.pooler.supabase.com:5432/postgres \
+    SUPABASE_URL=https://ealirhudqcsdxmrsltws.supabase.co \
+    SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVhbGlyaHVkcWNzZHhtcnNsdHdzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTk0Njc4MSwiZXhwIjoyMDg3NTIyNzgxfQ.eCLmqIOH-G2eW2gA9bfVIXp-h2iD_8y6Lz5RKHF8XtA \
+    SALESFORCE_CALLBACK_URL=https://forceclaw-api-4ab9c61cbc19.herokuapp.com/api/orgs/connect/salesforce/callback  \
+    SLACK_CLIENT_ID=4284186974433.10613067739792 \
+    SLACK_CLIENT_SECRET=6c90cb1ef04657a001e487b386b15d18 \
+    SLACK_SIGNING_SECRET=329845d36c50652e2fa769d4d2eabbf8 \
+    SLACK_REDIRECT_URI=https://forceclaw-api-4ab9c61cbc19.herokuapp.com/api/slack/oauth/callback  \
+    STRIPE_SECRET_KEY=xxx \
+    ANTHROPIC_API_KEY=xxx

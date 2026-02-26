@@ -11,6 +11,7 @@ import auditRouter from "./routes/audit";
 import teamRouter from "./routes/team";
 import billingRouter from "./routes/billing";
 import slackRouter from "./routes/slack";
+import slackWebhooksRouter from "./routes/slackWebhooks";
 import userRouter from "./routes/user";
 
 const app = express();
@@ -18,6 +19,10 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors({ origin: process.env.FRONTEND_URL }));
 app.use(helmet());
+
+// Register webhook routes BEFORE express.json() so raw body is available
+app.use("/api/slack", slackWebhooksRouter);
+
 app.use(express.json());
 
 // Health check (no auth)
