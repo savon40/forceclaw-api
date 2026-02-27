@@ -31,7 +31,7 @@ export class SlackService {
     accessToken: string,
     channel: string,
     text: string
-  ): Promise<void> {
+  ): Promise<{ ts: string }> {
     const response = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
@@ -41,10 +41,84 @@ export class SlackService {
       body: JSON.stringify({ channel, text }),
     });
 
-    const data = (await response.json()) as { ok: boolean; error?: string };
+    const data = (await response.json()) as { ok: boolean; ts: string; error?: string };
     if (!data.ok) {
       throw new Error(`Slack postMessage failed: ${data.error}`);
     }
+    return { ts: data.ts };
+  }
+
+  async postThreadReply(
+    accessToken: string,
+    channel: string,
+    threadTs: string,
+    text: string
+  ): Promise<void> {
+    const response = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ channel, text, thread_ts: threadTs }),
+    });
+
+    const data = (await response.json()) as { ok: boolean; error?: string };
+    if (!data.ok) {
+      throw new Error(`Slack postThreadReply failed: ${data.error}`);
+    }
+  }
+
+  async postBlockMessage(
+    accessToken: string,
+    channel: string,
+    threadTs: string,
+    blocks: unknown[],
+    text?: string
+  ): Promise<void> {
+    const response = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        channel,
+        thread_ts: threadTs,
+        blocks,
+        text: text || "ForceClaw",
+      }),
+    });
+
+    const data = (await response.json()) as { ok: boolean; error?: string };
+    if (!data.ok) {
+      throw new Error(`Slack postBlockMessage failed: ${data.error}`);
+    }
+  }
+
+  async getUserInfo(
+    accessToken: string,
+    userId: string
+  ): Promise<{ email: string; realName: string }> {
+    const response = await fetch(`https://slack.com/api/users.info?user=${userId}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    const data = (await response.json()) as {
+      ok: boolean;
+      user?: { profile: { email?: string; real_name?: string } };
+      error?: string;
+    };
+    if (!data.ok || !data.user) {
+      throw new Error(`Slack getUserInfo failed: ${data.error}`);
+    }
+
+    return {
+      email: data.user.profile.email || "",
+      realName: data.user.profile.real_name || "",
+    };
   }
 
   buildAuthorizationUrl(accountId: string): string {

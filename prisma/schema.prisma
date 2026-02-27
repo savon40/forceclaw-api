@@ -83,6 +83,8 @@ model Job {
   prUrl           String?   @map("pr_url")
   changeSetName   String?   @map("change_set_name")
   pendingQuestion String?   @map("pending_question")
+  slackChannel    String?   @map("slack_channel")
+  slackThreadTs   String?   @map("slack_thread_ts")
   durationMs      Int?      @map("duration_ms")
   completedAt     DateTime? @map("completed_at")
   createdAt       DateTime  @default(now()) @map("created_at")

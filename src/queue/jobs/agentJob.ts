@@ -6,4 +6,7 @@ export interface AgentJobPayload {
   title: string;
   description: string;
   userId: string;
+  slackChannel?: string;
+  slackThreadTs?: string;
+  slackAccessToken?: string;
 }
