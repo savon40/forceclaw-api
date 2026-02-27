@@ -166,6 +166,87 @@ export class ComponentCacheService {
   }
 
   /**
+   * List all LWC bundles in the org via Tooling API.
+   */
+  async getLwcBundles(): Promise<{ id: string; developerName: string; masterLabel: string; apiVersion: string; description: string | null }[]> {
+    const cacheKey = "lwc_bundles";
+
+    const cached = await this.getCached(cacheKey);
+    if (cached) return cached as { id: string; developerName: string; masterLabel: string; apiVersion: string; description: string | null }[];
+
+    console.log(`=== FETCHING LWC BUNDLES FOR ORG: ${this.orgId} ===`);
+    const result = await this.conn.tooling.query<{
+      Id: string;
+      DeveloperName: string;
+      MasterLabel: string;
+      ApiVersion: string;
+      Description: string | null;
+      NamespacePrefix: string | null;
+    }>(
+      "SELECT Id, DeveloperName, MasterLabel, ApiVersion, Description, NamespacePrefix FROM LightningComponentBundle WHERE NamespacePrefix = null ORDER BY DeveloperName LIMIT 2000"
+    );
+
+    const bundles = result.records.map((r) => ({
+      id: r.Id,
+      developerName: r.DeveloperName,
+      masterLabel: r.MasterLabel,
+      apiVersion: r.ApiVersion,
+      description: r.Description,
+    }));
+
+    console.log(`FETCHED ${bundles.length} LWC BUNDLES`);
+    await this.setCache(cacheKey, bundles);
+    return bundles;
+  }
+
+  /**
+   * Get all source files for a specific LWC bundle via Tooling API.
+   */
+  async getLwcSource(developerName: string): Promise<{ bundleId: string; developerName: string; files: { filePath: string; source: string }[] }> {
+    validateName(developerName, "LWC");
+    const cacheKey = `lwc:${developerName}`;
+
+    const cached = await this.getCached(cacheKey);
+    if (cached) return cached as { bundleId: string; developerName: string; files: { filePath: string; source: string }[] };
+
+    console.log(`=== FETCHING LWC SOURCE: ${developerName} ===`);
+
+    // First find the bundle ID
+    const bundleResult = await this.conn.tooling.query<{
+      Id: string;
+      DeveloperName: string;
+    }>(`SELECT Id, DeveloperName FROM LightningComponentBundle WHERE DeveloperName = '${developerName}' LIMIT 1`);
+
+    if (bundleResult.records.length === 0) {
+      throw new Error(`LWC bundle not found: "${developerName}". Check the name and try again.`);
+    }
+
+    const bundleId = bundleResult.records[0].Id;
+
+    // Fetch all resources in the bundle
+    const resourceResult = await this.conn.tooling.query<{
+      Id: string;
+      FilePath: string;
+      Source: string;
+    }>(`SELECT Id, FilePath, Source FROM LightningComponentResource WHERE LightningComponentBundleId = '${bundleId}'`);
+
+    const files = resourceResult.records.map((r) => ({
+      filePath: r.FilePath,
+      source: r.Source,
+    }));
+
+    const data = {
+      bundleId,
+      developerName,
+      files,
+    };
+
+    console.log(`FETCHED LWC SOURCE: ${developerName} — ${files.length} files (${files.map(f => f.filePath).join(", ")})`);
+    await this.setCache(cacheKey, data);
+    return data;
+  }
+
+  /**
    * Get flow definition/metadata via Tooling API.
    */
   async getFlowDefinition(apiName: string): Promise<{ id: string; apiName: string; label: string; processType: string; metadata: unknown }> {

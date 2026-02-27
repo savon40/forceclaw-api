@@ -117,6 +117,33 @@ export const toolDefinitions: Anthropic.Tool[] = [
     },
   },
 
+  // LWC Read tools
+  {
+    name: "list_lwc_bundles",
+    description:
+      "List all custom Lightning Web Components in the org (excluding managed packages). Returns developer name, label, API version, and description.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "get_lwc_source",
+    description:
+      "Get the full source code of a Lightning Web Component by developer name. Returns all files in the bundle (JS, HTML, CSS, XML config).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        developer_name: {
+          type: "string",
+          description: "The developer name of the LWC (e.g. 'myComponent'). Use list_lwc_bundles to find available names.",
+        },
+      },
+      required: ["developer_name"],
+    },
+  },
+
   // Phase 2B — Write tools
   {
     name: "create_apex_class",
@@ -249,6 +276,12 @@ export async function executeTool(
         return await executeGetApexTriggerBody(input.trigger_name as string, componentCache);
       case "get_flow_definition":
         return await executeGetFlowDefinition(input.flow_api_name as string, componentCache);
+
+      // LWC read
+      case "list_lwc_bundles":
+        return await executeListLwcBundles(componentCache);
+      case "get_lwc_source":
+        return await executeGetLwcSource(input.developer_name as string, componentCache);
 
       // Phase 2B — write
       case "create_apex_class":
@@ -499,6 +532,49 @@ async function executeGetFlowDefinition(
 
   const output = `Flow: ${data.label} (${data.apiName})\nType: ${data.processType}\nId: ${data.id}\n\nMetadata:\n${JSON.stringify(data.metadata, null, 2)}`;
   console.log(`RETURNED FLOW DEFINITION: ${data.apiName} — ${data.processType}`);
+  return { content: output, isError: false };
+}
+
+// ─────────────────────────────────────────
+// LWC Read handlers
+// ─────────────────────────────────────────
+
+async function executeListLwcBundles(
+  componentCache: ComponentCacheService
+): Promise<ToolResult> {
+  console.log(`=== LIST LWC BUNDLES ===`);
+  const bundles = await componentCache.getLwcBundles();
+
+  if (bundles.length === 0) {
+    return { content: "No custom Lightning Web Components found in this org.", isError: false };
+  }
+
+  let output = `Lightning Web Components (${bundles.length}):\n`;
+  for (const b of bundles) {
+    const desc = b.description ? ` — ${b.description}` : "";
+    output += `  - ${b.developerName} (${b.masterLabel}) [API ${b.apiVersion}]${desc}\n`;
+  }
+
+  console.log(`RETURNED ${bundles.length} LWC BUNDLES`);
+  return { content: output, isError: false };
+}
+
+async function executeGetLwcSource(
+  developerName: string,
+  componentCache: ComponentCacheService
+): Promise<ToolResult> {
+  console.log(`=== GET LWC SOURCE: ${developerName} ===`);
+  const data = await componentCache.getLwcSource(developerName);
+
+  let output = `LWC: ${data.developerName} (Bundle Id: ${data.bundleId})\nFiles: ${data.files.length}\n`;
+
+  for (const file of data.files) {
+    const ext = file.filePath.split(".").pop() || "";
+    const lang = ext === "js" ? "javascript" : ext === "html" ? "html" : ext === "css" ? "css" : ext === "xml" ? "xml" : ext;
+    output += `\n--- ${file.filePath} ---\n\`\`\`${lang}\n${file.source}\n\`\`\`\n`;
+  }
+
+  console.log(`RETURNED LWC SOURCE: ${data.developerName} (${data.files.length} files)`);
   return { content: output, isError: false };
 }
 

@@ -7,6 +7,7 @@ export function buildSystemPrompt(orgSummary: string, orgName: string, orgType: 
 - List objects, flows, apex classes, and permission sets in the org
 - View full Apex class and trigger source code
 - View full Flow definitions and metadata
+- List and view full Lightning Web Component source code (JS, HTML, CSS, XML)
 - Answer questions about the org's configuration and data`;
 
   const writeCapabilities = isWritable
