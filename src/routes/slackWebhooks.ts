@@ -3,8 +3,6 @@ import express from "express";
 import { prisma } from "../lib/prisma";
 import { slackService } from "../services/slack";
 import { resolveSlackUser } from "../services/slackUserResolver";
-import { getAgentJobQueue } from "../queue";
-import type { AgentJobPayload } from "../queue/jobs/agentJob";
 
 const router = Router();
 
@@ -285,28 +283,10 @@ async function createJobAndEnqueue(params: CreateJobParams): Promise<void> {
     },
   });
 
-  // 6. Enqueue to BullMQ
-  const payload: AgentJobPayload = {
-    jobId: job.id,
-    accountId,
-    orgId,
-    type: "query",
-    title: job.title,
-    description: messageText,
-    userId,
-    slackChannel: channel,
-    slackThreadTs: threadTs,
-    slackAccessToken: accessToken,
-  };
+  // TODO: Enqueue to BullMQ when Redis is provisioned
 
-  try {
-    const queue = getAgentJobQueue();
-    await queue.add(`job-${job.id}`, payload);
-  } catch (err) {
-    console.warn("Failed to enqueue job (Redis may be unavailable):", err instanceof Error ? err.message : err);
-  }
-
-  // 7. Reply in thread
+  // 6. Reply in thread
+  console.log(`JOB CREATED: ${job.id} — replying in Slack thread`);
   await slackService.postThreadReply(
     accessToken,
     channel,
