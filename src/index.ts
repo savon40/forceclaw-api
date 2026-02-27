@@ -51,6 +51,11 @@ app.use(errorHandler);
 
 app.listen(PORT, () => {
   console.log(`forceclaw-api listening on port ${PORT}`);
+
+  // Start the BullMQ worker in the same process
+  import("./workers/agentWorker.js")
+    .then(() => console.log("AGENT WORKER LOADED"))
+    .catch((err) => console.error("FAILED TO LOAD AGENT WORKER:", err.message));
 });
 
 export default app;

@@ -3,7 +3,8 @@ import express from "express";
 import { prisma } from "../lib/prisma";
 import { slackService } from "../services/slack";
 import { resolveSlackUser } from "../services/slackUserResolver";
-import { runAgentLoop } from "../agent/loop";
+import { getAgentJobQueue } from "../queue";
+import type { AgentJobPayload } from "../queue/jobs/agentJob";
 
 const router = Router();
 
@@ -269,20 +270,48 @@ interface CreateJobParams {
 async function handleOrgMessage(params: CreateJobParams): Promise<void> {
   const { accountId, orgId, userId, messageText, channel, threadTs, accessToken } = params;
 
-  console.log(`=== HANDLE ORG MESSAGE ===`);
+  console.log(`=== HANDLE ORG MESSAGE — ENQUEUING JOB ===`);
   console.log(`ACCOUNT: ${accountId}, ORG: ${orgId}, USER: ${userId}`);
   console.log(`MESSAGE: ${messageText}`);
 
-  // Run the Claude agent loop (handles job creation, conversation, and Slack replies)
-  await runAgentLoop({
+  // Create a Job record in the DB first
+  const job = await prisma.job.create({
+    data: {
+      accountId,
+      orgId,
+      userId,
+      status: "queued",
+      type: "query",
+      title: messageText.slice(0, 200),
+      description: messageText,
+      slackChannel: channel,
+      slackThreadTs: threadTs,
+    },
+  });
+
+  console.log(`CREATED JOB RECORD: ${job.id}`);
+
+  // Enqueue the job via BullMQ
+  const payload: AgentJobPayload = {
+    jobId: job.id,
     accountId,
     orgId,
     userId,
-    messageText,
-    channel,
-    threadTs,
-    accessToken,
+    type: "query",
+    title: messageText.slice(0, 200),
+    description: messageText,
+    slackChannel: channel,
+    slackThreadTs: threadTs,
+    slackAccessToken: accessToken,
+  };
+
+  const queue = getAgentJobQueue();
+  const bullJob = await queue.add("agent-job", payload, {
+    jobId: job.id,
   });
+
+  console.log(`ENQUEUED BULLMQ JOB: ${bullJob.id}`);
+  console.log(`=== HANDLE ORG MESSAGE — ENQUEUED SUCCESSFULLY ===`);
 }
 
 // POST /interactions
