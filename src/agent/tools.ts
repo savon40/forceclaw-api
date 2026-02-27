@@ -144,6 +144,39 @@ export const toolDefinitions: Anthropic.Tool[] = [
     },
   },
 
+  // Apex Test tools
+  {
+    name: "run_apex_tests",
+    description:
+      "Run one or more Apex test classes synchronously. Returns pass/fail per test method, error messages for failures, and code coverage for the classes under test. May take up to a few minutes for large test classes.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        test_class_names: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of test class names to run (e.g. ['AccountTriggerTest', 'OpportunityServiceTest']).",
+        },
+      },
+      required: ["test_class_names"],
+    },
+  },
+  {
+    name: "get_code_coverage",
+    description:
+      "Get the current code coverage percentage for a specific Apex class or trigger, based on the most recent test run. Does NOT re-run tests — use run_apex_tests to get fresh coverage.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        class_name: {
+          type: "string",
+          description: "The name of the Apex class or trigger to check coverage for.",
+        },
+      },
+      required: ["class_name"],
+    },
+  },
+
   // Phase 2B — Write tools
   {
     name: "create_apex_class",
@@ -282,6 +315,12 @@ export async function executeTool(
         return await executeListLwcBundles(componentCache);
       case "get_lwc_source":
         return await executeGetLwcSource(input.developer_name as string, componentCache);
+
+      // Apex tests
+      case "run_apex_tests":
+        return await executeRunApexTests(input.test_class_names as string[], conn);
+      case "get_code_coverage":
+        return await executeGetCodeCoverage(input.class_name as string, conn);
 
       // Phase 2B — write
       case "create_apex_class":
@@ -575,6 +614,122 @@ async function executeGetLwcSource(
   }
 
   console.log(`RETURNED LWC SOURCE: ${data.developerName} (${data.files.length} files)`);
+  return { content: output, isError: false };
+}
+
+// ─────────────────────────────────────────
+// Apex Test handlers
+// ─────────────────────────────────────────
+
+async function executeRunApexTests(
+  testClassNames: string[],
+  conn: Connection
+): Promise<ToolResult> {
+  console.log(`=== RUN APEX TESTS: ${testClassNames.join(", ")} ===`);
+
+  if (!testClassNames || testClassNames.length === 0) {
+    return { content: "No test class names provided.", isError: true };
+  }
+
+  // Build the request body for runTestsSynchronous
+  const tests = testClassNames.map((name) => ({ className: name }));
+
+  console.log(`RUNNING ${tests.length} TEST CLASS(ES) SYNCHRONOUSLY...`);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const response = await (conn as any).request({
+    method: "POST",
+    url: `/services/data/v${conn.version}/tooling/runTestsSynchronous`,
+    body: JSON.stringify({ tests }),
+    headers: { "Content-Type": "application/json" },
+  });
+
+  console.log(`TEST RUN COMPLETE: ${JSON.stringify(response).slice(0, 500)}`);
+
+  // Parse results
+  const numRun = response.numTestsRun || 0;
+  const numFailures = response.numFailures || 0;
+  const numPassed = numRun - numFailures;
+  const totalTime = response.totalTime || 0;
+
+  let output = `## Test Results\n`;
+  output += `**${numPassed}/${numRun} passed** (${numFailures} failed) in ${totalTime}ms\n\n`;
+
+  // Successes
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const successes = response.successes || [];
+  if (successes.length > 0) {
+    output += `### Passed\n`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const s of successes) {
+      output += `  - ${s.name}.${s.methodName} (${s.time}ms)\n`;
+    }
+    output += `\n`;
+  }
+
+  // Failures
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const failures = response.failures || [];
+  if (failures.length > 0) {
+    output += `### Failed\n`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const f of failures) {
+      output += `  - **${f.name}.${f.methodName}** (${f.time}ms)\n`;
+      if (f.message) output += `    Message: ${f.message}\n`;
+      if (f.stackTrace) output += `    Stack: ${f.stackTrace}\n`;
+    }
+    output += `\n`;
+  }
+
+  // Code coverage
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const codeCoverage = response.codeCoverage || [];
+  if (codeCoverage.length > 0) {
+    output += `### Code Coverage\n`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const cov of codeCoverage) {
+      const covered = cov.numLocations - cov.numLocationsNotCovered;
+      const total = cov.numLocations;
+      const pct = total > 0 ? Math.round((covered / total) * 100) : 100;
+      output += `  - ${cov.name}: **${pct}%** (${covered}/${total} lines)\n`;
+    }
+  }
+
+  console.log(`TEST SUMMARY: ${numPassed}/${numRun} passed, ${numFailures} failed`);
+  return { content: output, isError: numFailures > 0 };
+}
+
+async function executeGetCodeCoverage(
+  className: string,
+  conn: Connection
+): Promise<ToolResult> {
+  console.log(`=== GET CODE COVERAGE: ${className} ===`);
+
+  const result = await conn.tooling.query<{
+    ApexClassOrTriggerId: string;
+    ApexClassOrTrigger: { Name: string };
+    NumLinesCovered: number;
+    NumLinesUncovered: number;
+  }>(
+    `SELECT ApexClassOrTriggerId, ApexClassOrTrigger.Name, NumLinesCovered, NumLinesUncovered FROM ApexCodeCoverageAggregate WHERE ApexClassOrTrigger.Name = '${className.replace(/'/g, "\\'")}'`
+  );
+
+  if (result.records.length === 0) {
+    return {
+      content: `No code coverage data found for "${className}". Run the relevant test class(es) first using run_apex_tests.`,
+      isError: false,
+    };
+  }
+
+  const record = result.records[0];
+  const covered = record.NumLinesCovered;
+  const uncovered = record.NumLinesUncovered;
+  const total = covered + uncovered;
+  const pct = total > 0 ? Math.round((covered / total) * 100) : 100;
+
+  const output = `Code Coverage for **${className}**: **${pct}%** (${covered}/${total} lines covered, ${uncovered} uncovered)`;
+
+  console.log(`CODE COVERAGE: ${className} — ${pct}% (${covered}/${total})`);
   return { content: output, isError: false };
 }
 

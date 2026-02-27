@@ -8,6 +8,8 @@ export function buildSystemPrompt(orgSummary: string, orgName: string, orgType: 
 - View full Apex class and trigger source code
 - View full Flow definitions and metadata
 - List and view full Lightning Web Component source code (JS, HTML, CSS, XML)
+- Run Apex test classes and report pass/fail results with error details
+- Check code coverage percentages for Apex classes and triggers
 - Answer questions about the org's configuration and data`;
 
   const writeCapabilities = isWritable
