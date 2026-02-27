@@ -3,6 +3,7 @@ import express from "express";
 import { prisma } from "../lib/prisma";
 import { slackService } from "../services/slack";
 import { resolveSlackUser } from "../services/slackUserResolver";
+import { runAgentLoop } from "../agent/loop";
 
 const router = Router();
 
@@ -206,7 +207,7 @@ async function handleEventAsync(
 
   if (orgs.length === 1) {
     // Auto-select the only org
-    await createJobAndEnqueue({
+    await handleOrgMessage({
       accountId,
       orgId: orgs[0].id,
       userId: resolved.userId,
@@ -265,34 +266,23 @@ interface CreateJobParams {
   accessToken: string;
 }
 
-async function createJobAndEnqueue(params: CreateJobParams): Promise<void> {
+async function handleOrgMessage(params: CreateJobParams): Promise<void> {
   const { accountId, orgId, userId, messageText, channel, threadTs, accessToken } = params;
 
-  // 5. Create a Job record in DB
-  const job = await prisma.job.create({
-    data: {
-      accountId,
-      orgId,
-      userId,
-      status: "queued",
-      type: "query",
-      title: messageText.slice(0, 200),
-      description: messageText,
-      slackChannel: channel,
-      slackThreadTs: threadTs,
-    },
-  });
+  console.log(`=== HANDLE ORG MESSAGE ===`);
+  console.log(`ACCOUNT: ${accountId}, ORG: ${orgId}, USER: ${userId}`);
+  console.log(`MESSAGE: ${messageText}`);
 
-  // TODO: Enqueue to BullMQ when Redis is provisioned
-
-  // 6. Reply in thread
-  console.log(`JOB CREATED: ${job.id} — replying in Slack thread`);
-  await slackService.postThreadReply(
-    accessToken,
+  // Run the Claude agent loop (handles job creation, conversation, and Slack replies)
+  await runAgentLoop({
+    accountId,
+    orgId,
+    userId,
+    messageText,
     channel,
     threadTs,
-    "Got it — working on this now. I'll update you here when I'm done."
-  );
+    accessToken,
+  });
 }
 
 // POST /interactions
@@ -355,7 +345,7 @@ async function handleInteractionAsync(
       return;
     }
 
-    await createJobAndEnqueue({
+    await handleOrgMessage({
       accountId: data.accountId,
       orgId: data.orgId,
       userId: data.userId,

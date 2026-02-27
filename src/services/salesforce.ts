@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma";
-import jsforce from "jsforce";
+import jsforce, { Connection } from "jsforce";
 
 interface TokenResponse {
   access_token: string;
@@ -271,6 +271,63 @@ export class SalesforceService {
         tokenStatus: "valid",
       },
     });
+  }
+
+  /**
+   * Get a live jsforce.Connection for an org.
+   * Re-authenticates via client credentials if available, otherwise uses stored token.
+   */
+  async getConnection(orgId: string): Promise<Connection> {
+    console.log(`=== GET CONNECTION START ===`);
+    console.log(`LOOKING UP ORG: ${orgId}`);
+
+    const org = await prisma.org.findUnique({
+      where: { id: orgId },
+    });
+
+    if (!org) {
+      throw new Error(`Org not found: ${orgId}`);
+    }
+
+    console.log(`ORG FOUND: ${org.name} (type: ${org.type})`);
+
+    // Prefer client credentials flow (re-auths fresh each time)
+    if (org.sfConsumerKey && org.sfConsumerSecret && org.sfLoginUrl) {
+      console.log(`RE-AUTHENTICATING VIA CLIENT CREDENTIALS FOR: ${org.name}`);
+      const result = await this.loginWithClientCredentials({
+        consumerKey: org.sfConsumerKey,
+        consumerSecret: org.sfConsumerSecret,
+        loginUrl: org.sfLoginUrl,
+      });
+
+      // Update stored token
+      await prisma.org.update({
+        where: { id: orgId },
+        data: {
+          accessToken: result.accessToken,
+          instanceUrl: result.instanceUrl,
+          tokenStatus: "valid",
+        },
+      });
+
+      console.log(`CLIENT CREDENTIALS AUTH SUCCESS — INSTANCE: ${result.instanceUrl}`);
+      return new jsforce.Connection({
+        instanceUrl: result.instanceUrl,
+        accessToken: result.accessToken,
+      });
+    }
+
+    // Fallback: use stored access token
+    if (org.accessToken && org.instanceUrl) {
+      console.log(`USING STORED ACCESS TOKEN FOR: ${org.name}`);
+      console.log(`=== GET CONNECTION END (stored token) ===`);
+      return new jsforce.Connection({
+        instanceUrl: org.instanceUrl,
+        accessToken: org.accessToken,
+      });
+    }
+
+    throw new Error(`No credentials available for org: ${org.name}. Connect via OAuth or Client Credentials.`);
   }
 
   async getOrgMetadata(
