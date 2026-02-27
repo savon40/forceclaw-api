@@ -216,6 +216,23 @@ export class OrgContextService {
   }
 
   /**
+   * Invalidate a Layer 1 cache entry (e.g. after a write operation).
+   */
+  async invalidateCache(cacheKey: string): Promise<void> {
+    console.log(`LAYER 1 CACHE INVALIDATE: org=${this.orgId} key=${cacheKey}`);
+
+    const { error } = await supabaseAdmin
+      .from("org_metadata_cache")
+      .delete()
+      .eq("org_id", this.orgId)
+      .eq("cache_key", cacheKey);
+
+    if (error) {
+      console.error(`LAYER 1 CACHE INVALIDATE ERROR: ${cacheKey}:`, error.message);
+    }
+  }
+
+  /**
    * Build a compressed org summary for the Claude system prompt (~500-1000 tokens).
    */
   async buildOrgSummary(): Promise<string> {

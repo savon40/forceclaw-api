@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "../lib/prisma";
 import { salesforceService } from "../services/salesforce";
 import { OrgContextService } from "../services/orgContext";
+import { ComponentCacheService } from "../services/componentCache";
 import { slackService } from "../services/slack";
 import { buildSystemPrompt } from "./systemPrompt";
 import { toolDefinitions, executeTool } from "./tools";
@@ -42,16 +43,19 @@ export async function runAgentLoop(params: RunAgentParams): Promise<void> {
     console.log(`STEP 1: GETTING SALESFORCE CONNECTION`);
     const conn = await salesforceService.getConnection(orgId);
 
-    // 2. Get org name for prompt
+    // 2. Get org name and type for prompt
     const org = await prisma.org.findUnique({
       where: { id: orgId },
-      select: { name: true },
+      select: { name: true, type: true },
     });
     const orgName = org?.name || "Salesforce Org";
+    const orgType = org?.type || "production"; // default to production (safest)
+    console.log(`ORG NAME: ${orgName}, ORG TYPE: ${orgType}`);
 
-    // 3. Build org context + summary
-    console.log(`STEP 2: BUILDING ORG CONTEXT`);
+    // 3. Build org context + component cache + summary
+    console.log(`STEP 2: BUILDING ORG CONTEXT + COMPONENT CACHE`);
     const orgContext = new OrgContextService(orgId, conn);
+    const componentCache = new ComponentCacheService(orgId, conn);
     const orgSummary = await orgContext.buildOrgSummary();
 
     // 4. Load or create conversation from DB
@@ -108,7 +112,7 @@ export async function runAgentLoop(params: RunAgentParams): Promise<void> {
     });
 
     // 5. Build system prompt
-    const systemPrompt = buildSystemPrompt(orgSummary, orgName);
+    const systemPrompt = buildSystemPrompt(orgSummary, orgName, orgType);
     console.log(`SYSTEM PROMPT LENGTH: ${systemPrompt.length} chars`);
 
     // 6. Claude agentic loop
@@ -177,7 +181,9 @@ export async function runAgentLoop(params: RunAgentParams): Promise<void> {
             toolCall.name,
             toolCall.input as Record<string, unknown>,
             orgContext,
-            conn
+            conn,
+            componentCache,
+            orgType
           );
 
           console.log(`TOOL RESULT (${toolCall.name}): isError=${result.isError}, length=${result.content.length}`);

@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { Connection } from "jsforce";
 import { OrgContextService } from "../services/orgContext";
+import { ComponentCacheService } from "../services/componentCache";
 
 export const toolDefinitions: Anthropic.Tool[] = [
   {
@@ -68,6 +69,135 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: [],
     },
   },
+
+  // Phase 2A — Deep Read tools
+  {
+    name: "get_apex_class_body",
+    description:
+      "Get the full source code of an Apex class by name. Returns the complete class body.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        class_name: {
+          type: "string",
+          description: "The name of the Apex class (e.g. 'AccountTriggerHandler').",
+        },
+      },
+      required: ["class_name"],
+    },
+  },
+  {
+    name: "get_apex_trigger_body",
+    description:
+      "Get the full source code of an Apex trigger by name. Returns the complete trigger body and the sObject it's on.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        trigger_name: {
+          type: "string",
+          description: "The name of the Apex trigger (e.g. 'AccountTrigger').",
+        },
+      },
+      required: ["trigger_name"],
+    },
+  },
+  {
+    name: "get_flow_definition",
+    description:
+      "Get the full definition/metadata of a Flow by API name. Returns the flow structure including elements, decisions, actions, and assignments.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        flow_api_name: {
+          type: "string",
+          description: "The API/Developer name of the Flow (e.g. 'Update_Account_Status').",
+        },
+      },
+      required: ["flow_api_name"],
+    },
+  },
+
+  // Phase 2B — Write tools
+  {
+    name: "create_apex_class",
+    description:
+      "Create a new Apex class in the org via the Tooling API. Only available in sandbox/developer orgs. Returns the new class ID or compile errors.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        class_name: {
+          type: "string",
+          description: "The name for the new Apex class.",
+        },
+        body: {
+          type: "string",
+          description: "The full Apex class source code (must include the class declaration).",
+        },
+      },
+      required: ["class_name", "body"],
+    },
+  },
+  {
+    name: "update_apex_class",
+    description:
+      "Update an existing Apex class body in the org via the Tooling API. Only available in sandbox/developer orgs. Looks up the class by name, then replaces the body. Returns success or compile errors.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        class_name: {
+          type: "string",
+          description: "The name of the existing Apex class to update.",
+        },
+        body: {
+          type: "string",
+          description: "The new full Apex class source code.",
+        },
+      },
+      required: ["class_name", "body"],
+    },
+  },
+  {
+    name: "create_apex_trigger",
+    description:
+      "Create a new Apex trigger in the org via the Tooling API. Only available in sandbox/developer orgs. Returns the new trigger ID or compile errors.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        trigger_name: {
+          type: "string",
+          description: "The name for the new trigger.",
+        },
+        sobject_name: {
+          type: "string",
+          description: "The sObject API name the trigger fires on (e.g. 'Account', 'Custom__c').",
+        },
+        body: {
+          type: "string",
+          description: "The full Apex trigger source code (must include the trigger declaration).",
+        },
+      },
+      required: ["trigger_name", "sobject_name", "body"],
+    },
+  },
+  {
+    name: "update_apex_trigger",
+    description:
+      "Update an existing Apex trigger body in the org via the Tooling API. Only available in sandbox/developer orgs. Looks up the trigger by name, then replaces the body. Returns success or compile errors.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        trigger_name: {
+          type: "string",
+          description: "The name of the existing Apex trigger to update.",
+        },
+        body: {
+          type: "string",
+          description: "The new full Apex trigger source code.",
+        },
+      },
+      required: ["trigger_name", "body"],
+    },
+  },
 ];
 
 interface ToolResult {
@@ -75,17 +205,32 @@ interface ToolResult {
   isError: boolean;
 }
 
+/**
+ * Assert that the org is writable (sandbox or developer). Throws for production orgs.
+ */
+function assertWritableOrg(orgType: string): void {
+  if (orgType === "production") {
+    throw new Error(
+      "WRITE BLOCKED: This is a production org. Apex class and trigger writes are only allowed in sandbox or developer orgs. " +
+      "Please connect a sandbox org to make changes."
+    );
+  }
+}
+
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
   orgContext: OrgContextService,
-  conn: Connection
+  conn: Connection,
+  componentCache: ComponentCacheService,
+  orgType: string
 ): Promise<ToolResult> {
   console.log(`=== TOOL EXECUTION: ${name} ===`);
   console.log(`TOOL INPUT: ${JSON.stringify(input)}`);
 
   try {
     switch (name) {
+      // Phase 1 — read-only
       case "query_salesforce":
         return await executeQuery(input.soql as string, conn);
       case "describe_object":
@@ -96,6 +241,34 @@ export async function executeTool(
         return await executeListFlows(orgContext);
       case "list_apex_classes":
         return await executeListApexClasses(orgContext);
+
+      // Phase 2A — deep read
+      case "get_apex_class_body":
+        return await executeGetApexClassBody(input.class_name as string, componentCache);
+      case "get_apex_trigger_body":
+        return await executeGetApexTriggerBody(input.trigger_name as string, componentCache);
+      case "get_flow_definition":
+        return await executeGetFlowDefinition(input.flow_api_name as string, componentCache);
+
+      // Phase 2B — write
+      case "create_apex_class":
+        return await executeCreateApexClass(
+          input.class_name as string, input.body as string, conn, orgContext, componentCache, orgType
+        );
+      case "update_apex_class":
+        return await executeUpdateApexClass(
+          input.class_name as string, input.body as string, conn, orgContext, componentCache, orgType
+        );
+      case "create_apex_trigger":
+        return await executeCreateApexTrigger(
+          input.trigger_name as string, input.sobject_name as string, input.body as string,
+          conn, orgContext, componentCache, orgType
+        );
+      case "update_apex_trigger":
+        return await executeUpdateApexTrigger(
+          input.trigger_name as string, input.body as string, conn, orgContext, componentCache, orgType
+        );
+
       default:
         return { content: `Unknown tool: ${name}`, isError: true };
     }
@@ -105,6 +278,10 @@ export async function executeTool(
     return { content: `Error: ${message}`, isError: true };
   }
 }
+
+// ─────────────────────────────────────────
+// Phase 1 handlers (unchanged)
+// ─────────────────────────────────────────
 
 async function executeQuery(soql: string, conn: Connection): Promise<ToolResult> {
   // Security: block non-SELECT queries
@@ -283,4 +460,231 @@ async function executeListApexClasses(orgContext: OrgContextService): Promise<To
   }
 
   return { content: output, isError: false };
+}
+
+// ─────────────────────────────────────────
+// Phase 2A — Deep Read handlers
+// ─────────────────────────────────────────
+
+async function executeGetApexClassBody(
+  className: string,
+  componentCache: ComponentCacheService
+): Promise<ToolResult> {
+  console.log(`=== GET APEX CLASS BODY: ${className} ===`);
+  const data = await componentCache.getApexClassBody(className);
+
+  const output = `Apex Class: ${data.name} (Id: ${data.id})\n\n\`\`\`apex\n${data.body}\n\`\`\``;
+  console.log(`RETURNED APEX CLASS BODY: ${data.name} (${data.body.length} chars)`);
+  return { content: output, isError: false };
+}
+
+async function executeGetApexTriggerBody(
+  triggerName: string,
+  componentCache: ComponentCacheService
+): Promise<ToolResult> {
+  console.log(`=== GET APEX TRIGGER BODY: ${triggerName} ===`);
+  const data = await componentCache.getApexTriggerBody(triggerName);
+
+  const output = `Apex Trigger: ${data.name} on ${data.tableEnumOrId} (Id: ${data.id})\n\n\`\`\`apex\n${data.body}\n\`\`\``;
+  console.log(`RETURNED APEX TRIGGER BODY: ${data.name} (${data.body.length} chars)`);
+  return { content: output, isError: false };
+}
+
+async function executeGetFlowDefinition(
+  flowApiName: string,
+  componentCache: ComponentCacheService
+): Promise<ToolResult> {
+  console.log(`=== GET FLOW DEFINITION: ${flowApiName} ===`);
+  const data = await componentCache.getFlowDefinition(flowApiName);
+
+  const output = `Flow: ${data.label} (${data.apiName})\nType: ${data.processType}\nId: ${data.id}\n\nMetadata:\n${JSON.stringify(data.metadata, null, 2)}`;
+  console.log(`RETURNED FLOW DEFINITION: ${data.apiName} — ${data.processType}`);
+  return { content: output, isError: false };
+}
+
+// ─────────────────────────────────────────
+// Phase 2B — Write handlers
+// ─────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function formatSaveErrors(errors: any[]): string {
+  if (!errors || errors.length === 0) return "Unknown error";
+  return errors
+    .map((e: any) => {
+      const line = e.fields ? ` (fields: ${e.fields.join(", ")})` : "";
+      return `${e.statusCode || "ERROR"}: ${e.message}${line}`;
+    })
+    .join("\n");
+}
+
+async function executeCreateApexClass(
+  className: string,
+  body: string,
+  conn: Connection,
+  orgContext: OrgContextService,
+  componentCache: ComponentCacheService,
+  orgType: string
+): Promise<ToolResult> {
+  assertWritableOrg(orgType);
+  console.log(`=== CREATE APEX CLASS: ${className} ===`);
+  console.log(`BODY LENGTH: ${body.length} chars`);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (conn.tooling as any).create("ApexClass", {
+    Name: className,
+    Body: body,
+  });
+
+  console.log(`CREATE RESULT: success=${result.success} id=${result.id}`);
+
+  if (!result.success) {
+    const errorMsg = formatSaveErrors(result.errors);
+    console.log(`CREATE FAILED — COMPILE ERRORS:\n${errorMsg}`);
+    return {
+      content: `Failed to create Apex class "${className}".\n\nCompile errors:\n${errorMsg}`,
+      isError: true,
+    };
+  }
+
+  // Invalidate caches
+  await Promise.all([
+    orgContext.invalidateCache("apex_classes"),
+    componentCache.invalidateComponent("apex_class", className),
+  ]);
+
+  console.log(`=== CREATE APEX CLASS SUCCESS: ${className} (${result.id}) ===`);
+  return {
+    content: `Apex class "${className}" created successfully.\nId: ${result.id}`,
+    isError: false,
+  };
+}
+
+async function executeUpdateApexClass(
+  className: string,
+  body: string,
+  conn: Connection,
+  orgContext: OrgContextService,
+  componentCache: ComponentCacheService,
+  orgType: string
+): Promise<ToolResult> {
+  assertWritableOrg(orgType);
+  console.log(`=== UPDATE APEX CLASS: ${className} ===`);
+  console.log(`NEW BODY LENGTH: ${body.length} chars`);
+
+  // Look up the class ID by name
+  const existing = await componentCache.getApexClassBody(className);
+  console.log(`FOUND EXISTING CLASS: ${existing.name} (${existing.id})`);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (conn.tooling as any).update("ApexClass", {
+    Id: existing.id,
+    Body: body,
+  });
+
+  console.log(`UPDATE RESULT: success=${result.success}`);
+
+  if (!result.success) {
+    const errorMsg = formatSaveErrors(result.errors);
+    console.log(`UPDATE FAILED — COMPILE ERRORS:\n${errorMsg}`);
+    return {
+      content: `Failed to update Apex class "${className}".\n\nCompile errors:\n${errorMsg}`,
+      isError: true,
+    };
+  }
+
+  // Invalidate caches
+  await Promise.all([
+    orgContext.invalidateCache("apex_classes"),
+    componentCache.invalidateComponent("apex_class", className),
+  ]);
+
+  console.log(`=== UPDATE APEX CLASS SUCCESS: ${className} ===`);
+  return {
+    content: `Apex class "${className}" updated successfully.`,
+    isError: false,
+  };
+}
+
+async function executeCreateApexTrigger(
+  triggerName: string,
+  sobjectName: string,
+  body: string,
+  conn: Connection,
+  orgContext: OrgContextService,
+  componentCache: ComponentCacheService,
+  orgType: string
+): Promise<ToolResult> {
+  assertWritableOrg(orgType);
+  console.log(`=== CREATE APEX TRIGGER: ${triggerName} on ${sobjectName} ===`);
+  console.log(`BODY LENGTH: ${body.length} chars`);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (conn.tooling as any).create("ApexTrigger", {
+    Name: triggerName,
+    TableEnumOrId: sobjectName,
+    Body: body,
+  });
+
+  console.log(`CREATE RESULT: success=${result.success} id=${result.id}`);
+
+  if (!result.success) {
+    const errorMsg = formatSaveErrors(result.errors);
+    console.log(`CREATE FAILED — COMPILE ERRORS:\n${errorMsg}`);
+    return {
+      content: `Failed to create Apex trigger "${triggerName}".\n\nCompile errors:\n${errorMsg}`,
+      isError: true,
+    };
+  }
+
+  // Invalidate caches
+  await componentCache.invalidateComponent("apex_trigger", triggerName);
+
+  console.log(`=== CREATE APEX TRIGGER SUCCESS: ${triggerName} (${result.id}) ===`);
+  return {
+    content: `Apex trigger "${triggerName}" on ${sobjectName} created successfully.\nId: ${result.id}`,
+    isError: false,
+  };
+}
+
+async function executeUpdateApexTrigger(
+  triggerName: string,
+  body: string,
+  conn: Connection,
+  orgContext: OrgContextService,
+  componentCache: ComponentCacheService,
+  orgType: string
+): Promise<ToolResult> {
+  assertWritableOrg(orgType);
+  console.log(`=== UPDATE APEX TRIGGER: ${triggerName} ===`);
+  console.log(`NEW BODY LENGTH: ${body.length} chars`);
+
+  // Look up the trigger ID by name
+  const existing = await componentCache.getApexTriggerBody(triggerName);
+  console.log(`FOUND EXISTING TRIGGER: ${existing.name} (${existing.id})`);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = await (conn.tooling as any).update("ApexTrigger", {
+    Id: existing.id,
+    Body: body,
+  });
+
+  console.log(`UPDATE RESULT: success=${result.success}`);
+
+  if (!result.success) {
+    const errorMsg = formatSaveErrors(result.errors);
+    console.log(`UPDATE FAILED — COMPILE ERRORS:\n${errorMsg}`);
+    return {
+      content: `Failed to update Apex trigger "${triggerName}".\n\nCompile errors:\n${errorMsg}`,
+      isError: true,
+    };
+  }
+
+  // Invalidate caches
+  await componentCache.invalidateComponent("apex_trigger", triggerName);
+
+  console.log(`=== UPDATE APEX TRIGGER SUCCESS: ${triggerName} ===`);
+  return {
+    content: `Apex trigger "${triggerName}" updated successfully.`,
+    isError: false,
+  };
 }
