@@ -3,7 +3,7 @@ import express from "express";
 import { prisma } from "../lib/prisma";
 import { slackService } from "../services/slack";
 import { resolveSlackUser } from "../services/slackUserResolver";
-import { agentJobQueue } from "../queue";
+import { getAgentJobQueue } from "../queue";
 import type { AgentJobPayload } from "../queue/jobs/agentJob";
 
 const router = Router();
@@ -299,7 +299,12 @@ async function createJobAndEnqueue(params: CreateJobParams): Promise<void> {
     slackAccessToken: accessToken,
   };
 
-  await agentJobQueue.add(`job-${job.id}`, payload);
+  try {
+    const queue = getAgentJobQueue();
+    await queue.add(`job-${job.id}`, payload);
+  } catch (err) {
+    console.warn("Failed to enqueue job (Redis may be unavailable):", err instanceof Error ? err.message : err);
+  }
 
   // 7. Reply in thread
   await slackService.postThreadReply(

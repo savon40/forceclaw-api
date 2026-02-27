@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { Worker, Job } from "bullmq";
-import { redisConnection } from "../queue/redis";
+import { getRedisConnection } from "../queue/redis";
 import { prisma } from "../lib/prisma";
 import { slackService } from "../services/slack";
 import { salesforceService } from "../services/salesforce";
@@ -139,7 +139,7 @@ const worker = new Worker<AgentJobPayload>(
     }
   },
   {
-    connection: redisConnection,
+    connection: getRedisConnection(),
     concurrency: 5,
   }
 );

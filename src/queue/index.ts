@@ -1,15 +1,22 @@
 import { Queue } from "bullmq";
-import { redisConnection } from "./redis";
+import { getRedisConnection } from "./redis";
 
-export const agentJobQueue = new Queue("agent-jobs", {
-  connection: redisConnection,
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: "exponential",
-      delay: 5000,
-    },
-    removeOnComplete: 100,
-    removeOnFail: 200,
-  },
-});
+let _queue: Queue | null = null;
+
+export function getAgentJobQueue(): Queue {
+  if (!_queue) {
+    _queue = new Queue("agent-jobs", {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: {
+          type: "exponential",
+          delay: 5000,
+        },
+        removeOnComplete: 100,
+        removeOnFail: 200,
+      },
+    });
+  }
+  return _queue;
+}
