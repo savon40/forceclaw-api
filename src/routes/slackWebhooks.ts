@@ -271,7 +271,60 @@ async function handleEventAsync(
     return;
   }
 
-  // 4c. No match — ask user to pick
+  // 4c. Intent-based inference — if the message implies dev work and there's exactly one dev org, use it
+  const devKeywords = [
+    "create", "update", "write", "deploy", "build", "add a",
+    "source code", "class body", "trigger body", "apex class", "apex trigger",
+    "lwc source", "flow definition", "flow metadata",
+    "run test", "run apex test", "code coverage", "test class",
+    "refactor", "fix the code", "modify", "change the code",
+  ];
+  const looksLikeDev = devKeywords.some((kw) => msgLower.includes(kw));
+
+  if (looksLikeDev) {
+    const devOrgs = orgs.filter((o) => o.type === "sandbox" || o.type === "developer");
+    if (devOrgs.length === 1) {
+      console.log(`INTENT-BASED ORG INFERENCE — DEV KEYWORDS DETECTED, SINGLE DEV ORG: ${devOrgs[0].name} (${devOrgs[0].id})`);
+      await handleOrgMessage({
+        accountId,
+        orgId: devOrgs[0].id,
+        userId: resolved.userId,
+        messageText,
+        channel: event.channel,
+        threadTs,
+        accessToken,
+      });
+      return;
+    }
+    console.log(`INTENT-BASED ORG INFERENCE — DEV KEYWORDS DETECTED BUT ${devOrgs.length} DEV ORGS — FALLING THROUGH TO PICKER`);
+  }
+
+  // 4d. Read-only / data question with single prod org — auto-select it
+  const prodKeywords = [
+    "how many", "count", "list all", "show me the", "what are",
+    "who has", "which users", "permission set", "report", "dashboard",
+    "record", "query", "find all", "look up",
+  ];
+  const looksLikeProd = prodKeywords.some((kw) => msgLower.includes(kw));
+
+  if (looksLikeProd) {
+    const prodOrgs = orgs.filter((o) => o.type === "production");
+    if (prodOrgs.length === 1) {
+      console.log(`INTENT-BASED ORG INFERENCE — DATA QUESTION DETECTED, SINGLE PROD ORG: ${prodOrgs[0].name} (${prodOrgs[0].id})`);
+      await handleOrgMessage({
+        accountId,
+        orgId: prodOrgs[0].id,
+        userId: resolved.userId,
+        messageText,
+        channel: event.channel,
+        threadTs,
+        accessToken,
+      });
+      return;
+    }
+  }
+
+  // 4e. No match — ask user to pick
   console.log(`MULTIPLE ORGS (${orgs.length}) — NO THREAD HISTORY OR MESSAGE MATCH — SHOWING PICKER`);
   const orgBlocks = [
     {

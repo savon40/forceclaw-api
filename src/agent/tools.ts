@@ -6,6 +6,7 @@ import { ComponentCacheService } from "../services/componentCache";
 // Tool mode: 'all' = available in every org, 'development' = sandbox/dev only
 const toolModes = new Map<string, "all" | "development">([
   ["query_salesforce", "all"],
+  ["query_tooling", "all"],
   ["describe_object", "all"],
   ["list_objects", "all"],
   ["list_flows", "all"],
@@ -57,9 +58,24 @@ export const toolDefinitions: Anthropic.Tool[] = [
     },
   },
   {
+    name: "query_tooling",
+    description:
+      "Execute a SOQL query against the Salesforce Tooling API. Use this to query metadata objects that aren't available via standard SOQL: ValidationRule, WorkflowRule, FlowDefinition, ApexTrigger (metadata), CustomField, AssignmentRule, AutoResponseRule, etc. SELECT queries only. A LIMIT clause will be auto-appended if missing (default 200). Returns up to 50 records for display; use COUNT() for totals.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        soql: {
+          type: "string",
+          description: "The Tooling API SOQL query to execute. Must be a SELECT statement. Example: SELECT Id, Active, Description, ErrorMessage, EntityDefinition.QualifiedApiName FROM ValidationRule WHERE EntityDefinition.QualifiedApiName = 'Account'",
+        },
+      },
+      required: ["soql"],
+    },
+  },
+  {
     name: "describe_object",
     description:
-      "Get the full field and relationship description of a Salesforce sObject. Returns field names, types, labels, picklist values, and relationship info.",
+      "Get the full field and relationship description of a Salesforce sObject. Returns field names, types, labels, picklist values, formula expressions, and relationship info.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -341,6 +357,8 @@ export async function executeTool(
       // Phase 1 — read-only
       case "query_salesforce":
         return await executeQuery(input.soql as string, conn);
+      case "query_tooling":
+        return await executeToolingQuery(input.soql as string, conn);
       case "describe_object":
         return await executeDescribe(input.object_name as string, conn);
       case "list_objects":
@@ -466,6 +484,68 @@ async function executeQuery(soql: string, conn: Connection): Promise<ToolResult>
   return { content: output, isError: false };
 }
 
+async function executeToolingQuery(soql: string, conn: Connection): Promise<ToolResult> {
+  // Security: block non-SELECT queries
+  const trimmed = soql.trim().toUpperCase();
+  if (!trimmed.startsWith("SELECT")) {
+    return {
+      content: "Only SELECT queries are allowed on the Tooling API.",
+      isError: true,
+    };
+  }
+
+  // Auto-append LIMIT if missing
+  let query = soql.trim();
+  if (!/\bLIMIT\b/i.test(query)) {
+    query += " LIMIT 200";
+    console.log(`AUTO-APPENDED LIMIT (tooling): ${query}`);
+  }
+
+  // Enforce max LIMIT of 2000
+  const limitMatch = query.match(/\bLIMIT\s+(\d+)/i);
+  if (limitMatch && parseInt(limitMatch[1], 10) > 2000) {
+    query = query.replace(/\bLIMIT\s+\d+/i, "LIMIT 2000");
+    console.log(`CAPPED LIMIT TO 2000 (tooling): ${query}`);
+  }
+
+  console.log(`EXECUTING TOOLING SOQL: ${query}`);
+  const result = await conn.tooling.query<Record<string, unknown>>(query);
+  console.log(`TOOLING SOQL RESULT: ${result.totalSize} total records, ${result.records.length} returned`);
+
+  // Format results (same as standard query)
+  const totalSize = result.totalSize;
+  const records = result.records.slice(0, 50);
+
+  // Clean out jsforce metadata attributes
+  const cleanRecords = records.map((r: Record<string, unknown>) => {
+    const clean: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(r)) {
+      if (key === "attributes") continue;
+      if (value && typeof value === "object" && "attributes" in (value as Record<string, unknown>)) {
+        const nested: Record<string, unknown> = {};
+        for (const [nk, nv] of Object.entries(value as Record<string, unknown>)) {
+          if (nk === "attributes") continue;
+          nested[nk] = nv;
+        }
+        clean[key] = nested;
+      } else {
+        clean[key] = value;
+      }
+    }
+    return clean;
+  });
+
+  let output = `Tooling API — Total records: ${totalSize}\n`;
+  if (cleanRecords.length === 0) {
+    output += "No records found.";
+  } else {
+    output += `Showing ${cleanRecords.length}${totalSize > 50 ? ` of ${totalSize}` : ""}:\n`;
+    output += JSON.stringify(cleanRecords, null, 2);
+  }
+
+  return { content: output, isError: false };
+}
+
 async function executeDescribe(objectName: string, conn: Connection): Promise<ToolResult> {
   console.log(`DESCRIBING OBJECT: ${objectName}`);
   const desc = await conn.describe(objectName);
@@ -489,6 +569,9 @@ async function executeDescribe(objectName: string, conn: Connection): Promise<To
     }
     if (f.length && f.type === "string") {
       info.maxLength = f.length;
+    }
+    if (f.calculated && f.calculatedFormula) {
+      info.formula = f.calculatedFormula;
     }
     return info;
   });
