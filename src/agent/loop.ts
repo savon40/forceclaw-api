@@ -5,9 +5,9 @@ import { OrgContextService } from "../services/orgContext";
 import { ComponentCacheService } from "../services/componentCache";
 import { slackService } from "../services/slack";
 import { buildSystemPrompt } from "./systemPrompt";
-import { toolDefinitions, executeTool } from "./tools";
+import { getToolsForOrg, executeTool } from "./tools";
 
-const MAX_TURNS = 10;
+const MAX_TURNS = 15;
 const MODEL = "claude-sonnet-4-5-20250929";
 
 const anthropic = new Anthropic();
@@ -52,11 +52,15 @@ export async function runAgentLoop(params: RunAgentParams): Promise<void> {
     const orgType = org?.type || "production"; // default to production (safest)
     console.log(`ORG NAME: ${orgName}, ORG TYPE: ${orgType}`);
 
-    // 3. Build org context + component cache + summary
-    console.log(`STEP 2: BUILDING ORG CONTEXT + COMPONENT CACHE`);
+    // 3. Build org context + summary; component cache only for dev/sandbox
+    const isProduction = orgType === "production";
+    console.log(`STEP 2: BUILDING ORG CONTEXT${isProduction ? "" : " + COMPONENT CACHE"}`);
     const orgContext = new OrgContextService(orgId, conn);
-    const componentCache = new ComponentCacheService(orgId, conn);
+    const componentCache = isProduction ? null : new ComponentCacheService(orgId, conn);
     const orgSummary = await orgContext.buildOrgSummary();
+    if (isProduction) {
+      console.log(`PRODUCTION ORG — COMPONENT CACHE SKIPPED (no source code storage)`);
+    }
 
     // 4. Load or create conversation from DB
     console.log(`STEP 3: LOADING CONVERSATION HISTORY`);
@@ -115,7 +119,8 @@ export async function runAgentLoop(params: RunAgentParams): Promise<void> {
     const systemPrompt = buildSystemPrompt(orgSummary, orgName, orgType);
     console.log(`SYSTEM PROMPT LENGTH: ${systemPrompt.length} chars`);
 
-    // 6. Claude agentic loop
+    // 6. Claude agentic loop — filter tools by org type
+    const tools = getToolsForOrg(orgType);
     let turnCount = 0;
 
     while (turnCount < MAX_TURNS) {
@@ -126,7 +131,7 @@ export async function runAgentLoop(params: RunAgentParams): Promise<void> {
         model: MODEL,
         max_tokens: 4096,
         system: systemPrompt,
-        tools: toolDefinitions,
+        tools,
         messages: conversationHistory as Anthropic.MessageParam[],
       });
 

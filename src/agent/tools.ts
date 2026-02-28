@@ -3,6 +3,43 @@ import { Connection } from "jsforce";
 import { OrgContextService } from "../services/orgContext";
 import { ComponentCacheService } from "../services/componentCache";
 
+// Tool mode: 'all' = available in every org, 'development' = sandbox/dev only
+const toolModes = new Map<string, "all" | "development">([
+  ["query_salesforce", "all"],
+  ["describe_object", "all"],
+  ["list_objects", "all"],
+  ["list_flows", "all"],
+  ["list_apex_classes", "all"],
+  ["get_apex_class_body", "development"],
+  ["get_apex_trigger_body", "development"],
+  ["get_flow_definition", "development"],
+  ["list_lwc_bundles", "all"],
+  ["get_lwc_source", "development"],
+  ["run_apex_tests", "development"],
+  ["get_code_coverage", "development"],
+  ["create_apex_class", "development"],
+  ["update_apex_class", "development"],
+  ["create_apex_trigger", "development"],
+  ["update_apex_trigger", "development"],
+]);
+
+/**
+ * Return the tool definitions filtered by org type.
+ * Production orgs get only 'all' tools (query, describe, list inventory).
+ * Dev/sandbox orgs get every tool.
+ */
+export function getToolsForOrg(orgType: string): Anthropic.Tool[] {
+  const isProduction = orgType === "production";
+  if (!isProduction) {
+    console.log(`TOOL FILTER: orgType=${orgType} — SENDING ALL ${toolDefinitions.length} TOOLS`);
+    return toolDefinitions;
+  }
+
+  const filtered = toolDefinitions.filter((t) => toolModes.get(t.name) === "all");
+  console.log(`TOOL FILTER: orgType=${orgType} — SENDING ${filtered.length}/${toolDefinitions.length} TOOLS (production mode)`);
+  return filtered;
+}
+
 export const toolDefinitions: Anthropic.Tool[] = [
   {
     name: "query_salesforce",
@@ -282,11 +319,22 @@ export async function executeTool(
   input: Record<string, unknown>,
   orgContext: OrgContextService,
   conn: Connection,
-  componentCache: ComponentCacheService,
+  componentCache: ComponentCacheService | null,
   orgType: string
 ): Promise<ToolResult> {
   console.log(`=== TOOL EXECUTION: ${name} ===`);
   console.log(`TOOL INPUT: ${JSON.stringify(input)}`);
+
+  // Safety guard: if a dev-only tool is called but componentCache is null (production),
+  // reject it. This shouldn't happen because tools are filtered, but just in case.
+  const mode = toolModes.get(name);
+  if (mode === "development" && !componentCache) {
+    console.error(`TOOL BLOCKED: ${name} is a development-only tool but componentCache is null (production org)`);
+    return {
+      content: `This tool is not available for production orgs. Only data query and inventory tools are available.`,
+      isError: true,
+    };
+  }
 
   try {
     switch (name) {
@@ -302,19 +350,19 @@ export async function executeTool(
       case "list_apex_classes":
         return await executeListApexClasses(orgContext);
 
-      // Phase 2A — deep read
+      // Phase 2A — deep read (componentCache guaranteed non-null by safety guard above)
       case "get_apex_class_body":
-        return await executeGetApexClassBody(input.class_name as string, componentCache);
+        return await executeGetApexClassBody(input.class_name as string, componentCache!);
       case "get_apex_trigger_body":
-        return await executeGetApexTriggerBody(input.trigger_name as string, componentCache);
+        return await executeGetApexTriggerBody(input.trigger_name as string, componentCache!);
       case "get_flow_definition":
-        return await executeGetFlowDefinition(input.flow_api_name as string, componentCache);
+        return await executeGetFlowDefinition(input.flow_api_name as string, componentCache!);
 
-      // LWC read
+      // LWC read (componentCache guaranteed non-null by safety guard above)
       case "list_lwc_bundles":
-        return await executeListLwcBundles(componentCache);
+        return await executeListLwcBundles(componentCache!);
       case "get_lwc_source":
-        return await executeGetLwcSource(input.developer_name as string, componentCache);
+        return await executeGetLwcSource(input.developer_name as string, componentCache!);
 
       // Apex tests
       case "run_apex_tests":
@@ -322,23 +370,23 @@ export async function executeTool(
       case "get_code_coverage":
         return await executeGetCodeCoverage(input.class_name as string, conn);
 
-      // Phase 2B — write
+      // Phase 2B — write (componentCache guaranteed non-null by safety guard above)
       case "create_apex_class":
         return await executeCreateApexClass(
-          input.class_name as string, input.body as string, conn, orgContext, componentCache, orgType
+          input.class_name as string, input.body as string, conn, orgContext, componentCache!, orgType
         );
       case "update_apex_class":
         return await executeUpdateApexClass(
-          input.class_name as string, input.body as string, conn, orgContext, componentCache, orgType
+          input.class_name as string, input.body as string, conn, orgContext, componentCache!, orgType
         );
       case "create_apex_trigger":
         return await executeCreateApexTrigger(
           input.trigger_name as string, input.sobject_name as string, input.body as string,
-          conn, orgContext, componentCache, orgType
+          conn, orgContext, componentCache!, orgType
         );
       case "update_apex_trigger":
         return await executeUpdateApexTrigger(
-          input.trigger_name as string, input.body as string, conn, orgContext, componentCache, orgType
+          input.trigger_name as string, input.body as string, conn, orgContext, componentCache!, orgType
         );
 
       default:

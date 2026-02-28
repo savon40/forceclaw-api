@@ -138,20 +138,20 @@ export class OrgContextService {
     console.log(`FETCHING FLOWS FROM SALESFORCE FOR ORG: ${this.orgId}`);
     const result = await this.conn.query<{
       Id: string;
-      Definition: { DeveloperName: string };
-      MasterLabel: string;
+      ApiName: string;
+      Label: string;
       ProcessType: string;
-      Status: string;
+      TriggerType: string | null;
     }>(
-      "SELECT Id, Definition.DeveloperName, MasterLabel, ProcessType, Status FROM FlowVersionView WHERE Status = 'Active' ORDER BY MasterLabel LIMIT 500"
+      "SELECT Id, ApiName, Label, ProcessType, TriggerType FROM FlowDefinitionView WHERE IsActive = true ORDER BY Label LIMIT 500"
     );
 
-    const flows: FlowSummary[] = result.records.map((r: { Id: string; Definition?: { DeveloperName: string }; MasterLabel: string; ProcessType: string; Status: string }) => ({
+    const flows: FlowSummary[] = result.records.map((r) => ({
       id: r.Id,
-      name: r.Definition?.DeveloperName || "Unknown",
-      label: r.MasterLabel,
+      name: r.ApiName || "Unknown",
+      label: r.Label,
       processType: r.ProcessType,
-      status: r.Status,
+      status: "Active",
     }));
 
     console.log(`FETCHED ${flows.length} ACTIVE FLOWS`);
