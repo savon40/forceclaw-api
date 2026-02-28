@@ -193,7 +193,7 @@ async function handleEventAsync(
   // 4. Find connected orgs for the account
   const orgs = await prisma.org.findMany({
     where: { accountId, tokenStatus: "valid" },
-    select: { id: true, name: true },
+    select: { id: true, name: true, type: true },
   });
 
   if (orgs.length === 0) {
@@ -208,6 +208,7 @@ async function handleEventAsync(
 
   if (orgs.length === 1) {
     // Auto-select the only org
+    console.log(`SINGLE ORG — AUTO-SELECTING: ${orgs[0].name} (${orgs[0].id})`);
     await handleOrgMessage({
       accountId,
       orgId: orgs[0].id,
@@ -220,7 +221,58 @@ async function handleEventAsync(
     return;
   }
 
-  // Multiple orgs — ask user to pick
+  // Multiple orgs — try to resolve without asking
+
+  // 4a. Check if an org was already used in this thread
+  const existingJob = await prisma.job.findFirst({
+    where: {
+      accountId,
+      slackChannel: event.channel,
+      slackThreadTs: threadTs,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { orgId: true },
+  });
+
+  if (existingJob) {
+    console.log(`THREAD ORG REUSE — FOUND EXISTING JOB WITH ORG: ${existingJob.orgId}`);
+    await handleOrgMessage({
+      accountId,
+      orgId: existingJob.orgId,
+      userId: resolved.userId,
+      messageText,
+      channel: event.channel,
+      threadTs,
+      accessToken,
+    });
+    return;
+  }
+
+  // 4b. Try to infer org from message text (match by name or type)
+  const msgLower = messageText.toLowerCase();
+  const inferredOrg = orgs.find((org) => {
+    const nameLower = org.name.toLowerCase();
+    const typeLower = (org.type || "").toLowerCase();
+    // Match if message contains the org name or org type keyword
+    return msgLower.includes(nameLower) || (typeLower && msgLower.includes(typeLower));
+  });
+
+  if (inferredOrg) {
+    console.log(`ORG INFERRED FROM MESSAGE TEXT — MATCHED: ${inferredOrg.name} (${inferredOrg.id})`);
+    await handleOrgMessage({
+      accountId,
+      orgId: inferredOrg.id,
+      userId: resolved.userId,
+      messageText,
+      channel: event.channel,
+      threadTs,
+      accessToken,
+    });
+    return;
+  }
+
+  // 4c. No match — ask user to pick
+  console.log(`MULTIPLE ORGS (${orgs.length}) — NO THREAD HISTORY OR MESSAGE MATCH — SHOWING PICKER`);
   const orgBlocks = [
     {
       type: "section",
