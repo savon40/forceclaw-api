@@ -250,18 +250,32 @@ async function handleEventAsync(
 
   // 4b. Try to infer org from message text (match by name or type)
   const msgLower = messageText.toLowerCase();
-  const inferredOrg = orgs.find((org) => {
+  console.log(`ORG NAME MATCHING — MESSAGE: "${msgLower}"`);
+  console.log(`ORG NAME MATCHING — AVAILABLE ORGS: ${orgs.map((o) => `"${o.name}" (${o.type})`).join(", ")}`);
+
+  // Noise words to skip when matching org name tokens
+  const noiseWords = new Set(["org", "the", "in", "my", "a", "an", "for", "of", "and", "llc", "inc", "corp", "ltd"]);
+
+  const matchedOrgs = orgs.filter((org) => {
     const nameLower = org.name.toLowerCase();
-    const typeLower = (org.type || "").toLowerCase();
-    // Match if message contains the org name or org type keyword
-    return msgLower.includes(nameLower) || (typeLower && msgLower.includes(typeLower));
+
+    // Exact full-name match (message contains entire org name)
+    if (msgLower.includes(nameLower)) return true;
+
+    // Word-level match — check if any significant word from the org name appears in the message
+    const nameTokens = nameLower.split(/[\s\-_.,]+/).filter((t) => t.length >= 3 && !noiseWords.has(t));
+    for (const token of nameTokens) {
+      if (msgLower.includes(token)) return true;
+    }
+
+    return false;
   });
 
-  if (inferredOrg) {
-    console.log(`ORG INFERRED FROM MESSAGE TEXT — MATCHED: ${inferredOrg.name} (${inferredOrg.id})`);
+  if (matchedOrgs.length === 1) {
+    console.log(`ORG INFERRED FROM MESSAGE TEXT — MATCHED: ${matchedOrgs[0].name} (${matchedOrgs[0].id})`);
     await handleOrgMessage({
       accountId,
-      orgId: inferredOrg.id,
+      orgId: matchedOrgs[0].id,
       userId: resolved.userId,
       messageText,
       channel: event.channel,
@@ -270,57 +284,64 @@ async function handleEventAsync(
     });
     return;
   }
+  if (matchedOrgs.length > 1) {
+    // User mentioned something that matched multiple orgs — skip intent inference, go straight to picker
+    console.log(`ORG NAME MATCHING — MULTIPLE MATCHES: ${matchedOrgs.map((o) => o.name).join(", ")} — SKIPPING TO PICKER`);
+  } else {
+    // No name match — try intent-based inference only if user didn't mention any org name
+    console.log(`ORG NAME MATCHING — NO MATCH FOUND, FALLING THROUGH TO INTENT-BASED INFERENCE`);
 
-  // 4c. Intent-based inference — if the message implies dev work and there's exactly one dev org, use it
-  const devKeywords = [
-    "create", "update", "write", "deploy", "build", "add a",
-    "source code", "class body", "trigger body", "apex class", "apex trigger",
-    "lwc source", "flow definition", "flow metadata",
-    "run test", "run apex test", "code coverage", "test class",
-    "refactor", "fix the code", "modify", "change the code",
-  ];
-  const looksLikeDev = devKeywords.some((kw) => msgLower.includes(kw));
+    // 4c. Intent-based inference — if the message implies dev work and there's exactly one dev org, use it
+    const devKeywords = [
+      "create", "update", "write", "deploy", "build", "add a",
+      "source code", "class body", "trigger body", "apex class", "apex trigger",
+      "lwc source", "flow definition", "flow metadata",
+      "run test", "run apex test", "code coverage", "test class",
+      "refactor", "fix the code", "modify", "change the code",
+    ];
+    const looksLikeDev = devKeywords.some((kw) => msgLower.includes(kw));
 
-  if (looksLikeDev) {
-    const devOrgs = orgs.filter((o) => o.type === "sandbox" || o.type === "developer");
-    if (devOrgs.length === 1) {
-      console.log(`INTENT-BASED ORG INFERENCE — DEV KEYWORDS DETECTED, SINGLE DEV ORG: ${devOrgs[0].name} (${devOrgs[0].id})`);
-      await handleOrgMessage({
-        accountId,
-        orgId: devOrgs[0].id,
-        userId: resolved.userId,
-        messageText,
-        channel: event.channel,
-        threadTs,
-        accessToken,
-      });
-      return;
+    if (looksLikeDev) {
+      const devOrgs = orgs.filter((o) => o.type === "sandbox" || o.type === "developer");
+      if (devOrgs.length === 1) {
+        console.log(`INTENT-BASED ORG INFERENCE — DEV KEYWORDS DETECTED, SINGLE DEV ORG: ${devOrgs[0].name} (${devOrgs[0].id})`);
+        await handleOrgMessage({
+          accountId,
+          orgId: devOrgs[0].id,
+          userId: resolved.userId,
+          messageText,
+          channel: event.channel,
+          threadTs,
+          accessToken,
+        });
+        return;
+      }
+      console.log(`INTENT-BASED ORG INFERENCE — DEV KEYWORDS DETECTED BUT ${devOrgs.length} DEV ORGS — FALLING THROUGH TO PICKER`);
     }
-    console.log(`INTENT-BASED ORG INFERENCE — DEV KEYWORDS DETECTED BUT ${devOrgs.length} DEV ORGS — FALLING THROUGH TO PICKER`);
-  }
 
-  // 4d. Read-only / data question with single prod org — auto-select it
-  const prodKeywords = [
-    "how many", "count", "list all", "show me the", "what are",
-    "who has", "which users", "permission set", "report", "dashboard",
-    "record", "query", "find all", "look up",
-  ];
-  const looksLikeProd = prodKeywords.some((kw) => msgLower.includes(kw));
+    // 4d. Read-only / data question with single prod org — auto-select it
+    const prodKeywords = [
+      "how many", "count", "list all", "show me the", "what are",
+      "who has", "which users", "permission set", "report", "dashboard",
+      "record", "query", "find all", "look up",
+    ];
+    const looksLikeProd = prodKeywords.some((kw) => msgLower.includes(kw));
 
-  if (looksLikeProd) {
-    const prodOrgs = orgs.filter((o) => o.type === "production");
-    if (prodOrgs.length === 1) {
-      console.log(`INTENT-BASED ORG INFERENCE — DATA QUESTION DETECTED, SINGLE PROD ORG: ${prodOrgs[0].name} (${prodOrgs[0].id})`);
-      await handleOrgMessage({
-        accountId,
-        orgId: prodOrgs[0].id,
-        userId: resolved.userId,
-        messageText,
-        channel: event.channel,
-        threadTs,
-        accessToken,
-      });
-      return;
+    if (looksLikeProd) {
+      const prodOrgs = orgs.filter((o) => o.type === "production");
+      if (prodOrgs.length === 1) {
+        console.log(`INTENT-BASED ORG INFERENCE — DATA QUESTION DETECTED, SINGLE PROD ORG: ${prodOrgs[0].name} (${prodOrgs[0].id})`);
+        await handleOrgMessage({
+          accountId,
+          orgId: prodOrgs[0].id,
+          userId: resolved.userId,
+          messageText,
+          channel: event.channel,
+          threadTs,
+          accessToken,
+        });
+        return;
+      }
     }
   }
 
