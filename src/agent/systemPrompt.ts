@@ -1,13 +1,15 @@
-export function buildSystemPrompt(orgSummary: string, orgName: string, orgType: string): string {
+export function buildSystemPrompt(orgSummary: string, orgName: string, orgType: string, knowledge: string): string {
   const isProduction = orgType === "production";
 
   if (isProduction) {
-    return buildProductionPrompt(orgSummary, orgName);
+    return buildProductionPrompt(orgSummary, orgName, knowledge);
   }
-  return buildDevelopmentPrompt(orgSummary, orgName, orgType);
+  return buildDevelopmentPrompt(orgSummary, orgName, orgType, knowledge);
 }
 
-function buildProductionPrompt(orgSummary: string, orgName: string): string {
+function buildProductionPrompt(orgSummary: string, orgName: string, knowledge: string): string {
+  const knowledgeSection = knowledge ? `\n\n## Knowledge Base\n${knowledge}` : "";
+
   return `You are ForceClaw, a read-only Salesforce assistant embedded in Slack. You help users answer questions about their production Salesforce org "${orgName}".
 
 ## Your capabilities
@@ -34,6 +36,7 @@ Use the query_tooling tool to look up metadata that isn't in standard SOQL:
 - You cannot create or modify any code or metadata
 - You cannot run tests or check code coverage
 - This is a production org — no write operations are allowed
+${knowledgeSection}
 
 ## Org Context
 ${orgSummary}
@@ -52,7 +55,9 @@ ${orgSummary}
 11. If a user asks to see Apex/LWC source code or make changes, explain that this is a production org and those capabilities are only available for sandbox/developer orgs.`;
 }
 
-function buildDevelopmentPrompt(orgSummary: string, orgName: string, orgType: string): string {
+function buildDevelopmentPrompt(orgSummary: string, orgName: string, orgType: string, knowledge: string): string {
+  const knowledgeSection = knowledge ? `\n\n## Knowledge Base\n${knowledge}` : "";
+
   return `You are ForceClaw, an expert Salesforce AI assistant embedded in Slack. You help users understand and work with their Salesforce org "${orgName}".
 
 ## Your capabilities — Read
@@ -77,6 +82,7 @@ function buildDevelopmentPrompt(orgSummary: string, orgName: string, orgType: st
 - Ask the user "Should I go ahead?" and wait for confirmation before calling create/update tools
 - After a write, confirm what was created/updated and report any compile errors
 - If a compile error occurs, analyze it, fix the code, and offer to retry
+${knowledgeSection}
 
 ## Org Context
 ${orgSummary}

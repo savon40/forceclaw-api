@@ -6,6 +6,8 @@ import { ComponentCacheService } from "../services/componentCache";
 import { slackService } from "../services/slack";
 import { buildSystemPrompt } from "./systemPrompt";
 import { getToolsForOrg, executeTool } from "./tools";
+import { classifyMessage } from "./classifier";
+import { loadKnowledge } from "./knowledge";
 
 const MAX_TURNS = 15;
 const MODEL = "claude-sonnet-4-5-20250929";
@@ -115,8 +117,15 @@ export async function runAgentLoop(params: RunAgentParams): Promise<void> {
       content: messageText,
     });
 
+    // 4.5. Classify message and load relevant knowledge
+    console.log(`STEP 4: CLASSIFYING MESSAGE FOR KNOWLEDGE SELECTION`);
+    const skillIds = await classifyMessage(messageText);
+    console.log(`CLASSIFIER RESULT: [${skillIds.join(", ")}]`);
+    const knowledge = loadKnowledge(skillIds);
+    console.log(`KNOWLEDGE LOADED: ${knowledge.length} chars from ${skillIds.length + 2} files (includes always-loaded)`);
+
     // 5. Build system prompt
-    const systemPrompt = buildSystemPrompt(orgSummary, orgName, orgType);
+    const systemPrompt = buildSystemPrompt(orgSummary, orgName, orgType, knowledge);
     console.log(`SYSTEM PROMPT LENGTH: ${systemPrompt.length} chars`);
 
     // 6. Claude agentic loop — filter tools by org type
